@@ -1,0 +1,536 @@
+//Imports
+import processing.sound.*;
+import java.util.*;
+import java.io.FileWriter;
+import java.io.IOException;
+
+//Variables for external files
+PFont monocraft;       //Font for the game UI
+SoundFile bgm, cityDestroySFX, gameOverBGM, pointsSFX, bombShootSFX, explosionSFX, waveWinSFX, switchSFX; //Various music and sound effects
+
+//Variables for the basic game
+int turretX, turretY;      //Turret position
+float angle;               //Turret angle
+int explosionTimer;        //Explosion timer
+int turretIndex;           //Index of which turret is active
+boolean exploded = false;  //Flag to check if bombs exploding
+
+//Lists for storing all the objects
+ArrayList<Turret> turrets = new ArrayList<Turret>();           //Arraylist of each turret
+ArrayList<Bomb> bombs = new ArrayList<Bomb>();                 //Arraylist to keep all current bombs on screen
+ArrayList<Meteor> meteors = new ArrayList<Meteor>();           //Arraylist to hold a wave of meteors
+ArrayList<City> cities = new ArrayList<City>();                //Arraylist to hold the cities
+ArrayList<Satellite> satellites = new ArrayList<Satellite>();  //Arraylist to hold occasional satellites
+ArrayList<Effect> effects = new ArrayList<Effect>();           //Arraylist to hold ongoing score effects
+
+//Variables relating to the waves
+int waveNo;             //Counter for wave number
+int maxWaveMet;         //Maximum meteors in the current wave
+int waveMet;            //Current meteors in wave
+int waveIntervalTimer;  //Timer to pause between waves
+
+//Variables for the spawn timers of meteors
+int meteorSpawnInterval; //Interval between meteor spawns
+int meteorSpawnTimer;    //Timer for tracking meteor spawns
+
+//Variables for the meta elements of the game
+int score;               //Keeping track of score
+int scoreMultiplier;     //Multiplier for the score depending on the wave
+int prevScore;           //Score of the previous wave
+int citiesDestroyed;     //Counter for the number of cities destroyed
+boolean gameOver;        //Flag for lose state
+String playerName;       //Player's name for highscore
+boolean nameEntered;     //Flag to check if the players name has been entered
+String[] highScores;     //String array to store high score file data
+
+void setup() {
+
+  //Initialise all the variables
+  size(800, 600);
+  turretY = height - 50;
+  angle = 0;
+  explosionTimer = 0;
+  turretIndex = 1;
+
+  waveNo = 0;
+  maxWaveMet = 5;
+  waveMet = 0;
+  waveIntervalTimer = 10000;
+
+  meteorSpawnInterval = 60;
+  meteorSpawnTimer = 0;
+
+  score = 0;
+  scoreMultiplier = 1;
+  prevScore = 0;
+  citiesDestroyed = 0;
+  gameOver = false;
+  playerName = "";
+  nameEntered = false;
+
+  monocraft = loadFont("data/Monocraft.vlw");                     //Font was sourced from https://github.com/IdreesInc/Monocraft
+  bgm = new SoundFile(this, "data/bgm.mp3");                      //File was sourced from https://incompetech.com/music/royalty-free/music.html
+  cityDestroySFX = new SoundFile(this, "data/cityDestroy.mp3");   //File was sourced from https://uppbeat.io/sfx/arcade-game-retro-8-bit-big-shot-1/912/1601
+  gameOverBGM = new SoundFile(this, "data/gameOver.mp3");         //File was sourced from https://pixabay.com/sound-effects/videogame-death-sound-43894/
+  pointsSFX = new SoundFile(this, "data/points.mp3");             //File was sourced from https://pixabay.com/sound-effects/8-bit-powerup-6768/
+  bombShootSFX = new SoundFile(this, "data/bombShoot.wav");       //File was sourced from https://freesound.org/people/LittleRobotSoundFactory/sounds/270343/
+  explosionSFX = new SoundFile(this, "data/explosion.wav");       //File was sourced from https://freesound.org/people/LittleRobotSoundFactory/sounds/270311/
+  waveWinSFX = new SoundFile(this, "data/waveWin.wav");           //File was sourced from https://freesound.org/people/LittleRobotSoundFactory/sounds/270333/
+  switchSFX = new SoundFile(this, "data/switch.mp3");             //File was sourced from https://pixabay.com/sound-effects/8-bit-game-6-188105/
+
+  //Initialise all the array lists
+  turrets = new ArrayList<Turret>();           
+  bombs = new ArrayList<Bomb>();                 
+  meteors = new ArrayList<Meteor>();          
+  cities = new ArrayList<City>();                
+  satellites = new ArrayList<Satellite>();  
+  effects = new ArrayList<Effect>();       
+
+
+  //Intialise the 3 turrets
+  turrets.add(new Turret(width/4, turretY));
+  turrets.add(new Turret(width/2, turretY));
+  turrets.add(new Turret(3* width/4, turretY));
+
+
+  //Initialise the cities
+  for (int i = 1; i < 8; i+=2) {
+    cities.add(new City(i * width/8, height - 45));
+  }
+
+  //Start an initial wave
+  waveNo++;
+  waveMet = maxWaveMet * waveNo;
+
+  //Initialise the background music
+  bgm.amp(0.9);
+  bgm.play();
+  bgm.loop();
+}
+
+
+void draw() {
+  //Draw the background
+  background(0);
+  
+  //The main game loop within this if clause
+  if (!gameOver) {
+    //Draw the Ground
+    rect(0, height-45, width, 50);
+    fill(255);
+
+    //Draw the UI
+    textSize(25);
+    textAlign(CENTER);
+    textFont(monocraft);
+    text("Wave: ", width/2-10, 50);
+    text(waveNo, width/2+35, 50);
+    text("Score: ", width/2-10, 90);
+    text(score, width/2+55, 90);
+    
+    //Update and draw the turrets
+    int index = 0;
+    for (Turret turret : turrets) {
+      turret.update();
+      
+      //If the current turret in the loop is selected use the alternative draw method
+      if (index == turretIndex) {
+        turret.drawSelected();
+      } else {
+        turret.draw();
+      }
+      index++;
+    }
+
+    //Update and draw bombs
+    for (int i = bombs.size()-1; i>=0; i--) {
+      Bomb bomb = bombs.get(i);
+      bomb.update(exploded);
+      bomb.draw(exploded);
+      //If the bomb reaches the bottom of the screen or outwith the edge delete it. 
+      if (bomb.isOffscreen()) {
+        bombs.remove(i);
+      }
+    }
+    
+    //Update and draw meteors
+    for (int i = meteors.size()-1; i>=0; i--) {
+
+      Meteor meteor = meteors.get(i);
+      meteor.update();
+      meteor.draw();
+
+      //Check if meteor hits the bottom and do damage to the appropriate city
+      if (meteor.isOffscreen()) {
+        City closestCity = findClosestCity(meteor.x, height);
+        cityDestroySFX.amp(0.5);
+        cityDestroySFX.play();
+
+        //If that city is out of health increment the cities destroyed counter
+        if (closestCity.isDestroyed()) {
+          citiesDestroyed++;
+          
+          //If all cities are destroyed then initiate game over
+          if (citiesDestroyed >= 4) {
+            gameOverBGM.amp(0.5);
+            gameOverBGM.play();
+            gameOver = true;
+            break;
+          }
+        } 
+        
+        //Otherwise if the city isnt destroyed damage it
+        else closestCity.takeDamage(scoreMultiplier);
+
+        meteors.remove(i);
+        waveMet--;
+      }
+    }
+
+    //Draw and update satellites
+    for (int i = satellites.size()-1; i >= 0; i--) {
+      Satellite satellite = satellites.get(i);
+      satellite.update();
+      satellite.draw();
+
+      if (satellite.isOffScreen()) {
+        satellites.remove(i);
+      }
+    }
+
+    //Check for collisions between bombs and meteors/satellites
+    for (int i = bombs.size()-1; i>=0; i--) {
+      Bomb bomb = bombs.get(i);
+
+      for (int j = meteors.size()-1; j>=0; j--) {
+        Meteor meteor = meteors.get(j);
+
+        //If the explosion collides with meteor, destroy it and add to the score
+        if (exploded && bomb.collidesMeteor(meteor)) {
+          explosionSFX.amp(1);
+          explosionSFX.play();
+          meteors.remove(j);
+          waveMet--;
+          score += 25 * scoreMultiplier;
+          String effectText =  "+" + 25*scoreMultiplier;
+          effects.add(new Effect(meteor.x, meteor.y, effectText));
+          pointsSFX.amp(0.5);
+          pointsSFX.play();
+        }
+      }
+       
+      for (int j = satellites.size()-1; j>=0; j--) {
+        Satellite satellite = satellites.get(j);
+        
+        //If the bomb explosion collides with a satellite, destroy it and add to the score
+        if (exploded && bomb.collidesSatellite(satellite)) {
+          satellites.remove(j);
+          score += 100 * scoreMultiplier;
+          String effectText =  "+" + 100*scoreMultiplier;
+          effects.add(new Effect(satellite.x, satellite.y, effectText));
+          pointsSFX.amp(0.5);
+          pointsSFX.play();
+        }
+      }
+    }
+
+    //Draw and update effects
+    for (int i = effects.size() - 1; i >= 0; i--) {
+      Effect effect = effects.get(i);
+      effect.update();
+      effect.display();
+
+      if (effect.isFinished()) {
+        effects.remove(i);
+      }
+    }
+
+    //Shoot bomb when mouse is clicked
+    if (turrets.get(turretIndex).shooting) {
+      turrets.get(turretIndex).startShooting();
+    }
+
+    //Explode all bombs on screen
+    if (exploded) {
+
+      for (Bomb b : bombs) {
+        turrets.get(turretIndex).shooting = false;
+        b.explode();
+      }
+      
+
+      if ((explosionTimer + 200) < millis()) {
+        bombs = new ArrayList<Bomb>();
+        exploded = false;
+      }
+      fill(255);
+    }
+
+    //Check if it's time to start a new meteor wave
+    if (waveMet <= 0 && waveIntervalTimer < millis()) {
+      waveIntervalTimer = millis() + 10000;
+      startNewWave();
+    }
+
+    //Introduce satellites at random much more occasional intervals
+    if (frameCount % 300 == 0 && random(1) > 0.5) {
+      satellites.add(new Satellite());
+    }
+
+    //Draw and check cities
+    for (City city : cities) {
+      city.draw();
+    }
+
+    //Spawn meteors gradually within the wave
+    if (waveMet > 0 && meteorSpawnTimer <= 0) {
+      meteors.add(new Meteor(scoreMultiplier));
+      meteorSpawnTimer = meteorSpawnInterval;
+      waveMet--;
+    }
+
+    //Decrement meteor spawn timer
+    if (meteorSpawnTimer > 0) {
+      meteorSpawnTimer--;
+    }
+  } else {
+    
+    //Overlay the game over screen
+    fill(0);
+    rect(0, 0, width, height);
+    fill(255);
+    textSize(32);
+    
+    //If the name for the highscore hasnt been entered display the name enter screen
+    if (!nameEntered) {   
+      text("Game Over", width / 2, height / 2);
+      textSize(24);
+      text("Enter your name:", width / 2, height / 2 + 50);
+      text(playerName, width / 2, height / 2 + 80);
+      text("Final Score:", width / 2-50, height / 2 + 110);
+      text(score, width / 2+100, height / 2 + 110);
+    } 
+    
+    //Display the highscores
+    else {
+      displayHighScores();
+    }
+  }
+}
+
+
+/**INPUT/IO FUNCTIONS**/
+
+//Change the angle of the turret based on the mouse position
+void mouseMoved() {
+  //Calculate angle based on mouse position
+  float dx = mouseX - turretX;
+  float dy = mouseY - turretY;
+  angle = atan2(dy, dx);
+}
+
+void mousePressed() {
+  //Start shooting when mouse is pressed as long as theres ammo
+  if (turrets.get(turretIndex).ammo > 0) {
+    bombShootSFX.amp(1);
+    bombShootSFX.play();
+    turrets.get(turretIndex).shooting = true;
+  }
+}
+
+void keyPressed() {
+  //Trigger explosion when space is pressed
+  if (key == ' ') {
+    exploded = true;
+    explosionTimer = millis();
+  } 
+  
+  //if the key is a or d then switch the selected turret
+  else if (!gameOver && key == 'a' || !gameOver && keyCode == LEFT) {
+    switchSFX.amp(0.5);
+    switchSFX.play();
+    turretIndex = (turretIndex-1 + turrets.size()) % turrets.size();
+  } 
+  else if (!gameOver && key == 'd' || keyCode == RIGHT) {
+    switchSFX.amp(0.5);
+    switchSFX.play();
+    turretIndex = (turretIndex+1) % turrets.size();
+  } 
+  
+  //Otherwise in the game over state, if tab is pressed start a new game
+  else if (gameOver && key == TAB) {
+    //Start a new game when tab is pressed 
+    setup();
+  } 
+  
+  else if (gameOver && key == ENTER) {
+    //Write the player name to the highscore file and display highscore
+    enterHighScore();
+  }
+  
+  //If the key typed isnt a special key then add that key to the player name
+  else if (gameOver && key != ENTER && key != BACKSPACE && key != DELETE && key != TAB && key != ESC && key == 'd' &&  key == 'a') {
+    playerName += key;
+  } 
+  
+  //Otherwise if it was backspace then delete the last character in the player name
+  else if (gameOver && key == BACKSPACE && playerName.length() > 0) {
+    playerName = playerName.substring(0, playerName.length()-1);
+  }
+  
+}
+
+/**GENERAL OTHER FUNCTIONS**/
+
+//Simple findMin algorithm to find the city thats the least from the given coordinates
+City findClosestCity(float x, float y) {
+  float minDist = Float.MAX_VALUE;
+  City closestCity = null;
+  for (City city : cities) {
+    float dist = dist(x, y, city.x, city.y);
+    if (dist < minDist) {
+      minDist = dist;
+      closestCity = city;
+    }
+  }
+  return closestCity;
+}
+
+//Start a new wave of meteors
+void startNewWave() {
+  
+  Boolean restoreCity = false;
+  waveWinSFX.amp(0.5);
+  waveWinSFX.play();
+
+  //Add points for each turrets ammo count and then replenish its ammo
+  for (Turret turret : turrets) {
+    score += 5*turret.ammo * scoreMultiplier;
+    String effectText =  "+" + 5*scoreMultiplier*turret.ammo;
+    effects.add(new Effect(turret.x-10, turret.y-10, effectText));
+    pointsSFX.amp(0.5);
+    pointsSFX.play();
+    turret.ammo = 10;
+  }
+
+  //Check if the cities should be restored and update flag if so
+  if (score >= prevScore+10000) {
+    restoreCity = true;
+    prevScore += 10000;
+  }
+  
+  //Give points for every surviving city
+  for (City city : cities) {
+    if (!city.isDestroyed()) {
+      score += 100 * scoreMultiplier;
+      String effectText =  "+" + 100*scoreMultiplier;
+      effects.add(new Effect(city.x, city.y, effectText));
+      pointsSFX.amp(0.5);
+      pointsSFX.play();
+    }
+    
+    //If the cities should be restored then do so
+    if (restoreCity) {
+      city.health = 100;
+      citiesDestroyed = 0;
+    }
+  }
+
+  //Increment the wave number and set the number of meteors in the wave
+  waveNo++;
+  waveMet = maxWaveMet * waveNo;
+
+  //Switch statement to determine the score multiplier
+  switch(waveNo) {
+  case 1:
+  case 2:
+    scoreMultiplier = 1;
+    break;
+
+  case 3:
+  case 4:
+    scoreMultiplier = 2;
+    break;
+
+  case 5:
+  case 6:
+    scoreMultiplier = 3;
+    break;
+
+  case 7:
+  case 8:
+    scoreMultiplier = 4;
+    break;
+
+  case 9:
+  case 10:
+    scoreMultiplier = 5;
+    break;
+
+  default:
+    scoreMultiplier = 6;
+    break;
+  }
+}
+
+//Adds the new name and score to the highscore file
+void enterHighScore() {
+  
+  //Load the high score file
+  String[] newdata = loadStrings("highscores.txt");
+  
+  //create a new array and populate it with the current score list and then write it back to the file
+  String[] newHighScores = new String[newdata.length+2];
+  for (int i = 0; i< newdata.length; i++) newHighScores[i] = newdata[i];
+  newHighScores[newdata.length] = playerName;
+  newHighScores[newdata.length+1] = str(score);
+  saveStrings("highscores.txt", newHighScores);
+
+  //Set the name entered flag to true so the top 3 high scores will be displayed
+  nameEntered = true;
+}
+
+//Reads in and displays the highscores
+void displayHighScores() {
+  //Load high scores from the file
+  highScores = loadStrings("highscores.txt");
+
+  //Create an array to store parsed scores and names
+  int[] scores = new int[highScores.length/2];
+  String[] names = new String[highScores.length/2];
+
+  //Parse scores and names from the loaded data
+  for (int i = 0; i < highScores.length; i++) {
+    String line = highScores[i];
+    if (i%2 == 0) names[i/2] = line;
+    else scores[floor(i/2)] = Integer.parseInt(line);
+  }
+
+  //Sort scores in descending order
+  for (int i = 0; i < scores.length - 1; i++) {
+    for (int j = i + 1; j < scores.length; j++) {
+      if (scores[i] < scores[j]) {
+        //Swap scores
+        int temp = scores[i];
+        scores[i] = scores[j];
+        scores[j] = temp;
+
+        //Swap corresponding names
+        String tempLine = names[i];
+        names[i] = names[j];
+        names[j] = tempLine;
+      }
+    }
+  }
+
+  // Display the top 3 high scores
+  fill(255);
+  textAlign(CENTER);
+  textSize(30);
+  text("High Scores", width/2, height/2-80);
+  textSize(24);
+  for (int i = 0; i < 3; i++) {
+    text(names[i] + ": ", width/2-30, height/2 -50 + i*30);
+    text(scores[i], width / 2+60, height/2 -50 + i*30);
+  }
+}
